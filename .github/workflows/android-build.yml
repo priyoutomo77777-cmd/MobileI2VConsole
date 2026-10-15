@@ -1,0 +1,95 @@
+name: Build MobileI2VConsole Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/android-build.yml'
+      - 'src/MobileI2VConsole/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+
+      - name: Install .NET Android workload
+        run: dotnet workload install maui-android
+
+      - name: Restore dependencies
+        run: |
+          dotnet restore \
+            src/MobileI2VConsole/MobileI2VConsole.csproj
+
+      - name: Build Release APK
+        run: |
+          dotnet publish \
+            src/MobileI2VConsole/MobileI2VConsole.csproj \
+            --configuration Release \
+            --framework net10.0-android \
+            -p:AndroidPackageFormat=apk
+
+      - name: Prepare APK artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PROJECT_DIR="src/MobileI2VConsole"
+          APK_DIR="$PROJECT_DIR/bin/Release/net10.0-android/publish"
+          ARTIFACT_DIR="$RUNNER_TEMP/mobilei2v-artifacts"
+
+          mkdir -p "$ARTIFACT_DIR"
+
+          APK="$(find "$APK_DIR" -maxdepth 1 \
+            -type f -name '*.apk' -print -quit 2>/dev/null || true)"
+
+          if [ -z "$APK" ]; then
+            APK="$(find "$PROJECT_DIR/bin/Release/net10.0-android" \
+              -type f -name '*.apk' \
+              ! -path '*/publish/*' -print -quit)"
+          fi
+
+          if [ -z "$APK" ] || [ ! -f "$APK" ]; then
+            echo "ERROR: APK tidak ditemukan setelah build."
+            find "$PROJECT_DIR/bin/Release/net10.0-android" \
+              -type f -print || true
+            exit 1
+          fi
+
+          cp "$APK" "$ARTIFACT_DIR/MobileI2VConsole-Release.apk"
+          ls -lh "$ARTIFACT_DIR"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MobileI2VConsole-Android-APK
+          path: ${{ runner.temp }}/mobilei2v-artifacts/MobileI2VConsole-Release.apk
+          if-no-files-found: error
+          retention-days: 14
